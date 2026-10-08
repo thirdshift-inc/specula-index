@@ -9,8 +9,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from specula_index import build, manifest, pack
+from specula_index import build, floor, manifest, pack
 from specula_index.normalise import index_key
 from tests.packreader import RELATION_KINDS, read_core, read_details
 
@@ -419,6 +420,7 @@ class Manifest(FixtureBuild):
 
     def test_rows_and_keys_match_the_packs(self):
         self.assertEqual({"films": 6, "series": 2}, self.core_entry["rows"])
+        self.assertEqual(8, floor.core_records(self.out / manifest.MANIFEST_FILE))
         self.assertEqual(len(self.core.keys), self.core_entry["keys"])
         self.assertEqual({"films": 4, "series": 2}, self.details_entry["rows"])
         self.assertEqual(len(self.details.keys), self.details_entry["keys"])
@@ -439,6 +441,101 @@ class Manifest(FixtureBuild):
             with self.assertRaises(manifest.ManifestMismatch):
                 manifest.write(out, document)
             self.assertEqual(before, (out / manifest.MANIFEST_FILE).read_bytes())
+
+
+class Floor(unittest.TestCase):
+    MINIMUM = floor.MINIMUM_CORE_RECORDS
+    PREVIOUS = MINIMUM * 10
+
+    def test_fewer_records_than_the_minimum_are_refused(self):
+        with self.assertRaisesRegex(floor.TooFewRecords, "minimum"):
+            floor.check(self.MINIMUM - 1)
+
+    def test_without_a_previous_release_only_the_minimum_applies(self):
+        floor.check(self.MINIMUM)
+
+    def test_a_drop_of_more_than_a_tenth_is_refused(self):
+        for records in (self.PREVIOUS * 9 // 10 - 1, self.PREVIOUS // 2):
+            with self.subTest(records=records), \
+                    self.assertRaisesRegex(floor.TooFewRecords, "previous release"):
+                floor.check(records, self.PREVIOUS)
+
+    def test_a_small_drop_and_a_rise_are_allowed(self):
+        for records in (self.PREVIOUS * 9 // 10, self.PREVIOUS - 1, self.PREVIOUS,
+                        self.PREVIOUS * 2):
+            with self.subTest(records=records):
+                floor.check(records, self.PREVIOUS)
+
+    def test_a_drop_does_not_excuse_a_count_below_the_minimum(self):
+        with self.assertRaisesRegex(floor.TooFewRecords, "minimum"):
+            floor.check(self.MINIMUM - 1, self.MINIMUM)
+
+
+class RealBuild(unittest.TestCase):
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+        self.cache = self.scratch / "cache"
+        shutil.copytree(FIXTURE, self.cache)
+        self.out = self.scratch / "out"
+        self.previous = self.scratch / "previous.json"
+
+    def run_build(self, *options):
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said), contextlib.redirect_stdout(io.StringIO()):
+            status = build.main(["--out", str(self.out), "--date", VERSION, *options])
+        return status, said.getvalue()
+
+    def run_real_build(self, *options):
+        return self.run_build("--cache", str(self.cache), *options)
+
+    def previous_with(self, films, series):
+        rows = {"films": films, "series": series}
+        self.previous.write_text(json.dumps({"packs": [{"name": "core", "rows": rows}]}),
+                                 encoding="utf-8")
+        return ("--previous-manifest", str(self.previous))
+
+    def test_a_real_build_below_the_minimum_is_refused_and_nothing_is_written(self):
+        status, said = self.run_real_build()
+        self.assertEqual(1, status)
+        self.assertIn("build refused: 8 core records, fewer than the minimum", said)
+        self.assertFalse(self.out.exists())
+
+    def test_a_real_build_that_lost_more_than_a_tenth_is_refused_and_nothing_is_written(self):
+        with mock.patch.object(floor, "MINIMUM_CORE_RECORDS", 8):
+            status, said = self.run_real_build(*self.previous_with(films=7, series=2))
+        self.assertEqual(1, status)
+        self.assertIn("build refused: 8 core records, more than 10 percent fewer", said)
+        self.assertFalse(self.out.exists())
+
+    def test_a_real_build_no_smaller_than_the_previous_one_is_written(self):
+        with mock.patch.object(floor, "MINIMUM_CORE_RECORDS", 8):
+            status, _ = self.run_real_build(*self.previous_with(films=6, series=2))
+        self.assertEqual(0, status)
+        self.assertEqual(8, floor.core_records(self.out / manifest.MANIFEST_FILE))
+
+    def test_a_previous_manifest_that_cannot_be_read_is_refused(self):
+        unreadable = ("", "[]", '{"packs": []}',
+                      '{"packs": [{"name": "core", "rows": {"films": "many", "series": 0}}]}')
+        for text in unreadable:
+            with self.subTest(text=text):
+                self.previous.write_text(text, encoding="utf-8")
+                status, said = self.run_real_build("--previous-manifest", str(self.previous))
+                self.assertEqual(1, status)
+                self.assertTrue(said.startswith("build refused: "))
+                self.assertFalse(self.out.exists())
+
+    def test_a_previous_manifest_that_is_missing_is_refused(self):
+        status, said = self.run_real_build("--previous-manifest", str(self.previous))
+        self.assertEqual(1, status)
+        self.assertTrue(said.startswith("build refused: "))
+
+    def test_the_fixture_build_is_exempt(self):
+        status, _ = self.run_build("--fixture", str(FIXTURE),
+                                   *self.previous_with(films=1000000, series=0))
+        self.assertEqual(0, status)
+        self.assertEqual(8, floor.core_records(self.out / manifest.MANIFEST_FILE))
 
 
 class FileNames(unittest.TestCase):

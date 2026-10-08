@@ -1,11 +1,12 @@
 import argparse
 import datetime
+import functools
 import json
 import re
 import sys
 from pathlib import Path
 
-from . import extract, manifest, pack
+from . import extract, floor, manifest, pack
 
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -37,12 +38,15 @@ def arguments(argv):
     parser.add_argument("--endpoint", default=extract.DEFAULT_ENDPOINT)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--previous-manifest", type=Path)
     return parser.parse_args(argv)
 
 
-def build(out, version, raw, built=None):
+def build(out, version, raw, built=None, accept=None):
     extracted = extract.load(raw)
     core = pack.core_pack(extracted.kept, extracted.genres)
+    if accept:
+        accept(sum(core.rows.values()))
     details = pack.details_pack(
         extracted.details, core, extracted.entities, extracted.entity_fames, extracted.countries)
     out.mkdir(parents=True, exist_ok=True)
@@ -66,11 +70,16 @@ def build(out, version, raw, built=None):
 def main(argv=None):
     args = arguments(argv)
     try:
-        raw = args.fixture or extract.fetch_all(args.endpoint, args.cache, args.refresh)
-        document, report = build(args.out, args.date, raw, args.built)
+        if args.fixture:
+            raw, accept = args.fixture, None
+        else:
+            previous = args.previous_manifest and floor.core_records(args.previous_manifest)
+            raw = extract.fetch_all(args.endpoint, args.cache, args.refresh)
+            accept = functools.partial(floor.check, previous=previous)
+        document, report = build(args.out, args.date, raw, args.built, accept)
     except (extract.QLeverUnavailable, extract.MalformedAnswer, pack.OrphanDetails,
             pack.DoesNotFit, manifest.ManifestMismatch, manifest.UnsafeFileName,
-            FileNotFoundError) as error:
+            floor.TooFewRecords, floor.UnreadableManifest, FileNotFoundError) as error:
         print(f"build refused: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"manifest": document, "report": report}, indent=2, ensure_ascii=False))
