@@ -1,0 +1,71 @@
+name: build
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  KEEP_RELEASES: 8
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: setup-python (v7.0.0)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+      - name: unit tests
+        run: python -m unittest -v
+      - name: fetch the manifest of the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh release list --json tagName,isLatest --jq '.[] | select(.isLatest) | .tagName')"
+          if [ -n "$latest" ]; then
+            gh release download "$latest" --pattern manifest.json --dir previous
+          fi
+      - name: build from qlever
+        run: |
+          previous=()
+          if [ -f previous/manifest.json ]; then
+            previous=(--previous-manifest previous/manifest.json)
+          fi
+          python -m specula_index.build \
+            --out dist \
+            --date "$(date -u +%Y-%m-%d)" \
+            --built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${previous[@]}"
+      - name: publish the release as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(jq -er .tag dist/manifest.json)"
+          notes="$(jq -er .attribution dist/manifest.json)"
+          gh release create "$tag" dist/manifest.json dist/*.idx.gz --title "$tag" --notes "$notes" --latest
+      - name: keep the newest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' \
+            | grep '^index-' \
+            | sort -r \
+            | tail -n "+$((KEEP_RELEASES + 1))" \
+            | while read -r tag; do
+                gh release delete "$tag" --yes --cleanup-tag
+              done
