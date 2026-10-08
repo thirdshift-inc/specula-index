@@ -1,0 +1,9 @@
+?item	?value	?unit
+<http://www.wikidata.org/entity/Q900000001>	"5400"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q11574>
+<http://www.wikidata.org/entity/Q900000002>	"2"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q25235>
+<http://www.wikidata.org/entity/Q900000003>	"95"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q7727>
+<http://www.wikidata.org/entity/Q900000003>	"3"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q900300001>
+<http://www.wikidata.org/entity/Q900000006>	"80"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q7727>
+<http://www.wikidata.org/entity/Q900000007>	"70"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q7727>
+<http://www.wikidata.org/entity/Q900000009>	"60"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q7727>
+<http://www.wikidata.org/entity/Q900000004>	"-45"^^<http://www.w3.org/2001/XMLSchema#decimal>	<http://www.wikidata.org/entity/Q7727>
