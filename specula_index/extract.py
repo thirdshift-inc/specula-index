@@ -116,9 +116,7 @@ QUERIES = {
     "original_language": _pairs(
         "?item wdt:P364 ?value . OPTIONAL { ?value wdt:P218 ?code }", "?item ?value ?code"),
     "label_en": _pairs("?item rdfs:label ?value . FILTER (LANG(?value) = \"en\")"),
-    "label_pl": _pairs("?item rdfs:label ?value . FILTER (LANG(?value) = \"pl\")"),
     "alias_en": _pairs("?item skos:altLabel ?value . FILTER (LANG(?value) = \"en\")"),
-    "alias_pl": _pairs("?item skos:altLabel ?value . FILTER (LANG(?value) = \"pl\")"),
     "label_original": _pairs(
         "?item wdt:P364 ?language . ?language wdt:P218 ?code . "
         "?item rdfs:label ?value . FILTER (LANG(?value) = ?code)"),
@@ -282,7 +280,7 @@ def minutes_of(amount, unit):
     return minutes, None
 
 
-SEARCH_FIELDS = ("original_title", "label_en", "label_pl", "label_original")
+SEARCH_FIELDS = ("original_title", "label_en", "label_original")
 DISPLAY_FIELDS = ("label_en", "original_title", "label_original")
 
 
@@ -347,12 +345,10 @@ def _join_core(paths, counts):
         row.setdefault("original_titles", set()).add((value, lang or ""))
     for row, ((value, _), (code, _)) in each("original_language"):
         row.setdefault("languages", set()).add(code or qid(value))
-    for name in ("label_en", "label_pl"):
-        for row, ((value, _),) in each(name):
-            row[name] = min(value, row.get(name, value))
-    for name in ("alias_en", "alias_pl"):
-        for row, ((value, _),) in each(name):
-            row.setdefault("aliases", set()).add(value)
+    for row, ((value, _),) in each("label_en"):
+        row["label_en"] = min(value, row.get("label_en", value))
+    for row, ((value, _),) in each("alias_en"):
+        row.setdefault("aliases", set()).add(value)
     for row, ((value, lang),) in each("label_original"):
         row.setdefault("labels_original", {}).setdefault(lang or "", set()).add(value)
     for row, ((value, _),) in each("genre"):
@@ -404,9 +400,8 @@ def shaped(q, row):
         "tvdb": min(row["tvdb"], key=lambda v: (len(v), v)) if row.get("tvdb") else None,
         "original_title": original,
         "label_en": row.get("label_en"),
-        "label_pl": row.get("label_pl"),
         "label_original": label_original,
-        "aliases": sorted(aliases - {row.get("label_en"), row.get("label_pl"), original}),
+        "aliases": sorted(aliases - {row.get("label_en"), original}),
         "genres": sorted(row.get("genres", ()), key=qnum),
         "seasons": row.get("seasons") if kind == "series" else None,
         "fame": saturated_fame(row.get("fame", 0)),

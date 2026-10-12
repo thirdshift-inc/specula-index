@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from specula_index import build, floor, manifest, pack
+from specula_index import build, extract, floor, manifest, pack
 from specula_index.normalise import index_key
 from tests.packreader import RELATION_KINDS, read_core, read_details
 
@@ -32,7 +32,7 @@ UNSEARCHABLE = "Q900000009"
 SERIES_WITH_FILM_ID = "Q900000010"
 ORIGINAL_TITLE_ONLY = "Q900000011"
 ORIGINAL_LANGUAGE_LABEL_ONLY = "Q900000012"
-POLISH_AND_ALIAS_ONLY = "Q900000013"
+ALIAS_ONLY = "Q900000013"
 OBSCURE_COMPANY = "Q900500001"
 FAMOUS_COMPANY = "Q900500002"
 ADULT_TITLE_COMPANY = "Q900500003"
@@ -40,8 +40,6 @@ COMPANY_AND_BROADCASTER = "Q900600001"
 FILM_SERIES = "Q900700001"
 FRANCHISE = "Q900800001"
 UNLABELLED_FRANCHISE = "Q900800002"
-POLISH_LABELS = ("Także po polsku", "Obsada", "Tytuł z Ś", "Tytuł oryginalny", "W oryginale",
-                 "Tylko po polsku")
 ADULT_GENRE = "Q291"
 
 
@@ -120,8 +118,8 @@ class CorePack(FixtureBuild):
         years = sorted(record["year"] for record in self.core.exact("same-title"))
         self.assertEqual([1978, 2018], years)
 
-    def test_a_translated_title_is_reachable_through_its_alias(self):
-        found = self.core.exact(index_key("Polski alias"))
+    def test_a_title_is_reachable_through_its_english_alias(self):
+        found = self.core.exact(index_key("Also Known As"))
         self.assertEqual([ALIASED_FILM], [record["qid"] for record in found])
         self.assertEqual("Aliased Film", found[0]["label"])
 
@@ -146,27 +144,10 @@ class DisplayLabel(FixtureBuild):
         self.assertEqual("Originalsprache",
                          self.core.by_qid(ORIGINAL_LANGUAGE_LABEL_ONLY)["label"])
 
-    def test_a_row_named_only_in_polish_or_by_alias_is_dropped_and_counted(self):
-        self.assertIsNone(self.core.by_qid(POLISH_AND_ALIAS_ONLY))
-        self.assertEqual([], self.core.exact(index_key("Tylko po polsku")))
+    def test_a_row_named_only_by_alias_is_dropped_and_counted(self):
+        self.assertIsNone(self.core.by_qid(ALIAS_ONLY))
+        self.assertEqual([], self.core.exact(index_key("Only Alias")))
         self.assertEqual(2, self.report["counts"]["no_display_label_dropped"])
-
-    def test_no_polish_label_is_ever_shown(self):
-        shown = {record["label"] for record in self.core.records}
-        for label in POLISH_LABELS:
-            with self.subTest(label=label):
-                self.assertNotIn(label, shown)
-                self.assertNotIn(label.encode("utf-8"), self.core.data)
-                self.assertNotIn(label.encode("utf-8"), self.details.data)
-
-    def test_a_polish_title_still_finds_the_film(self):
-        for polish, q, shown in (("Także po polsku", SAME_TITLE_1978, "Same Title"),
-                                 ("Tytuł oryginalny", ORIGINAL_TITLE_ONLY, "Titre original"),
-                                 ("W oryginale", ORIGINAL_LANGUAGE_LABEL_ONLY, "Originalsprache")):
-            with self.subTest(polish=polish):
-                found = self.core.exact(index_key(polish))
-                self.assertEqual([q], [record["qid"] for record in found])
-                self.assertEqual(shown, found[0]["label"])
 
 
 class TmdbKind(FixtureBuild):
