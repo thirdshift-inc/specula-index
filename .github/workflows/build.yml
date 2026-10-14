@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  KEEP_RELEASES: 8
+  KEEP_RELEASES: 5
 
 jobs:
   index:
