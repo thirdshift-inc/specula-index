@@ -12,6 +12,7 @@ from pathlib import Path
 from .normalise import index_key
 
 DEFAULT_ENDPOINT = "https://qlever.dev/api/wikidata"
+UNKNOWN_VALUE = "<http://www.wikidata.org/.well-known/genid/"
 USER_AGENT = "SpeculaTitleIndex/1 (+https://github.com/thirdshift-inc/specula-index)"
 FETCH_ATTEMPTS = 3
 FETCH_TIMEOUT_SECONDS = 900
@@ -225,7 +226,7 @@ def qnum(q):
     return int(q[1:]) if q and q[1:].isdigit() else 0
 
 
-def rows(path, query):
+def rows(path, query, counts=None):
     expected = query.header
     with open(path, encoding="utf-8") as answer:
         header = [name.lstrip("?") for name in answer.readline().rstrip("\n").split("\t")]
@@ -236,7 +237,12 @@ def rows(path, query):
                 continue
             cells = line.rstrip("\n").split("\t")
             cells += [""] * (len(expected) - len(cells))
-            yield [term(cell) for cell in cells[:len(expected)]]
+            cells = cells[:len(expected)]
+            if any(cell.startswith(UNKNOWN_VALUE) for cell in cells):
+                if counts is not None:
+                    counts[f"{path.stem}_unknown_value_dropped"] += 1
+                continue
+            yield [term(cell) for cell in cells]
 
 
 _YEAR = re.compile(r"^([+-]?\d{1,4})-")
@@ -319,11 +325,11 @@ def _answers(raw):
 
 def _join_core(paths, counts):
     items = {}
-    for (item, _), (cls, _) in rows(paths["members"], QUERIES["members"]):
+    for (item, _), (cls, _) in rows(paths["members"], QUERIES["members"], counts):
         items.setdefault(qid(item), {"classes": set()})["classes"].add(qid(cls))
 
     def each(name):
-        for cells in rows(paths[name], QUERIES[name]):
+        for cells in rows(paths[name], QUERIES[name], counts):
             q = qid(cells[0][0])
             if q in items:
                 yield items[q], cells[1:]
@@ -408,10 +414,10 @@ def shaped(q, row):
     }
 
 
-def _english_labels(paths, prefix):
+def _english_labels(paths, prefix, counts):
     labels = {}
     name = f"{prefix}_label_en"
-    for (entity, _), (value, _) in rows(paths[name], QUERIES[name]):
+    for (entity, _), (value, _) in rows(paths[name], QUERIES[name], counts):
         e = qid(entity)
         labels[e] = min(value, labels.get(e, value))
     return labels
@@ -419,7 +425,7 @@ def _english_labels(paths, prefix):
 
 def _entity_fames(paths, counts):
     fames = {}
-    for (entity, _), (value, _) in rows(paths["entity_fame"], QUERIES["entity_fame"]):
+    for (entity, _), (value, _) in rows(paths["entity_fame"], QUERIES["entity_fame"], counts):
         fame = whole_number_of(value)
         if fame is None:
             counts["entity_fame_dropped"] += 1
@@ -429,13 +435,13 @@ def _entity_fames(paths, counts):
     return fames
 
 
-def _country_table(paths):
+def _country_table(paths, counts):
     codes = {}
     for (_, _), (country, _), (code, _) in rows(paths["country"], QUERIES["country"]):
         if code and re.fullmatch(r"[A-Z]{2}", code):
             c = qid(country)
             codes[c] = min(code, codes.get(c, code))
-    labels = _english_labels(paths, "country")
+    labels = _english_labels(paths, "country", counts)
     return {c: (codes.get(c), labels.get(c)) for c in set(codes) | set(labels)}
 
 
@@ -448,7 +454,7 @@ def _collect_details(paths, counts):
     collected = collections.defaultdict(dict)
 
     def each(name):
-        for cells in rows(paths[name], QUERIES[name]):
+        for cells in rows(paths[name], QUERIES[name], counts):
             yield collected[qid(cells[0][0])], cells[1:]
 
     for entry, ((person, _), (ordinal, _)) in each("cast"):
@@ -525,7 +531,8 @@ def load(raw):
             entry = {**entry, "episodes": None}
         details[q] = entry
 
-    snapshot = next((cells[0][0] for cells in rows(paths["snapshot"], QUERIES["snapshot"])), None)
+    snapshot = next(
+        (cells[0][0] for cells in rows(paths["snapshot"], QUERIES["snapshot"], counts)), None)
     counts.update({
         "items_in_classes": len(items),
         "kept": len(kept),
@@ -535,10 +542,10 @@ def load(raw):
     return Extract(
         kept=kept,
         details=details,
-        genres=_english_labels(paths, "genre"),
-        entities=_english_labels(paths, "entity"),
+        genres=_english_labels(paths, "genre", counts),
+        entities=_english_labels(paths, "entity", counts),
         entity_fames=_entity_fames(paths, counts),
-        countries=_country_table(paths),
+        countries=_country_table(paths, counts),
         snapshot=snapshot,
         counts=counts,
     )
