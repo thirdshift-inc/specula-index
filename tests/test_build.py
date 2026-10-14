@@ -358,6 +358,63 @@ class OrphanRefusal(unittest.TestCase):
             self.assertEqual(1, status)
 
 
+class UnknownValues(unittest.TestCase):
+    UNKNOWN = "<http://www.wikidata.org/.well-known/genid/7dbd1fa19444c4792ff33fdf09c3188b>"
+    PLANTED = {
+        "director": f"<http://www.wikidata.org/entity/{SAME_TITLE_1978}>\t{UNKNOWN}",
+        "cast": f"<http://www.wikidata.org/entity/{SAME_TITLE_1978}>\t{UNKNOWN}\t",
+        "company": f"<http://www.wikidata.org/entity/{SAME_TITLE_2018}>\t{UNKNOWN}",
+        "genre": f"<http://www.wikidata.org/entity/{SAME_TITLE_1978}>\t{UNKNOWN}",
+        "country": f"<http://www.wikidata.org/entity/{SAME_TITLE_1978}>\t{UNKNOWN}\t",
+        "original_title": f"<http://www.wikidata.org/entity/{ALIASED_FILM}>\t{UNKNOWN}",
+        "original_language": f"<http://www.wikidata.org/entity/{ALIASED_FILM}>\t{UNKNOWN}\t",
+        "published": f"<http://www.wikidata.org/entity/{SAME_TITLE_2018}>\t{UNKNOWN}",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        scratch = Path(cls.directory.name)
+        raw = scratch / "raw"
+        shutil.copytree(FIXTURE, raw)
+        for name, line in cls.PLANTED.items():
+            with open(raw / f"{name}.tsv", "a", encoding="utf-8") as answer:
+                answer.write(line + "\n")
+        cls.out = scratch / "out"
+        cls.document, cls.report = build.build(cls.out, VERSION, raw)
+        cls.core = read_core(cls.out / cls.document["packs"][0]["file"])
+        cls.details = read_details(cls.out / cls.document["packs"][1]["file"])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def test_a_row_holding_an_unknown_value_is_dropped_and_counted_per_query(self):
+        for name in self.PLANTED:
+            with self.subTest(query=name):
+                self.assertEqual(1, self.report["counts"][f"{name}_unknown_value_dropped"])
+
+    def test_the_title_keeps_its_known_values(self):
+        film = self.details.by_qid(SAME_TITLE_1978)
+        self.assertEqual([(person(11), "Director One")], film["director"])
+        self.assertEqual([(person(2), "Cast Two"), (person(1), "Cast One")], film["cast"])
+        self.assertEqual([("Q30", "US", "United States")], film["countries"])
+        self.assertEqual(
+            [("Q900100001", "horror film"), ("Q900100002", "thriller film")],
+            self.core.by_qid(SAME_TITLE_1978)["genres"])
+        self.assertEqual(2018, self.core.by_qid(SAME_TITLE_2018)["year"])
+
+    def test_an_unknown_value_never_becomes_a_name(self):
+        self.assertFalse(any(b"7dbd1fa1" in key for key in self.core.keys))
+        self.assertEqual("Aliased Film", self.core.by_qid(ALIASED_FILM)["label"])
+
+    def test_the_packs_match_the_unplanted_build(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            clean, _ = build.build(Path(scratch), VERSION, FIXTURE)
+        self.assertEqual([entry["sha256"] for entry in clean["packs"]],
+                         [entry["sha256"] for entry in self.document["packs"]])
+
+
 class PackRefusal(unittest.TestCase):
     def test_the_command_exits_non_zero_on_a_genre_that_is_not_a_qid(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -365,7 +422,7 @@ class PackRefusal(unittest.TestCase):
             shutil.copytree(FIXTURE, raw)
             with open(raw / "genre.tsv", "a", encoding="utf-8") as genre:
                 genre.write(f"<http://www.wikidata.org/entity/{SAME_TITLE_1978}>\t"
-                            "<http://www.wikidata.org/.well-known/genid/0123abcd>\n")
+                            "<https://example.org/genre/horror>\n")
             refusal = io.StringIO()
             with contextlib.redirect_stderr(refusal):
                 status = build.main(["--out", str(Path(scratch) / "out"), "--date", VERSION,
